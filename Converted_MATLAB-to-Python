@@ -1,0 +1,303 @@
+## This code was converted to Pytho from Matlab by the free Claude agent. 
+## This plots a poincare multisection for the ABC flow. 
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+from mpl_toolkits.mplot3d import Axes3D
+from skimage import measure
+
+# Clear all (Python equivalent - not needed but for reference)
+# In interactive Python, you'd use %reset
+
+# Parameters
+N = 30
+ti = 0
+tf = N * np.pi
+T_interval = [ti, tf]
+
+# A, B, C chosen for chaotic streamlines
+delta = 0.25
+B = 1
+C = 0.2 * delta
+A = np.sqrt(delta**2 - C**2)
+
+print(f"A = {A}")
+print(f"B = {B}")
+print(f"C = {C}")
+
+# Initial conditions
+ic = np.array([np.pi/3, np.pi, np.pi/3])
+ic2 = np.array([7*np.pi/6, 7*np.pi/6, 7*np.pi/6])
+
+# ODE system for ABC flow
+def ABC_ODE(t, x, A, B, C):
+    """ABC flow differential equations"""
+    dxdt = np.array([
+        A * np.sin(x[2]) + C * np.cos(x[1]),
+        B * np.sin(x[0]) + A * np.cos(x[2]),
+        C * np.sin(x[1]) + B * np.cos(x[0])
+    ])
+    return dxdt
+
+# Generate random initial conditions
+def rand_total(n, num_samples=10):
+    """Generate random initial conditions"""
+    return 2 * np.pi * np.random.rand(n, num_samples)
+
+# Random ICs
+rand_ics = rand_total(3, 10)
+
+# Plotting parameters
+angle = 2 * np.pi
+box_tor = [0, angle, 0, angle, 0, angle]
+
+# Define implicit surfaces (for reference)
+X1_zero = lambda x, y, z: A * np.sin(z) + C * np.cos(y)
+X2_zero = lambda x, y, z: B * np.sin(x) + A * np.cos(z)
+X3_zero = lambda x, y, z: C * np.sin(y) + B * np.cos(x)
+
+# Define negative q surfaces
+X1_q_neg = lambda x, y, z: A * np.sin(z) + C * np.cos(y) - q1_neg
+X2_q_neg = lambda x, y, z: B * np.sin(x) + A * np.cos(z) - q2_neg
+X3_q_neg = lambda x, y, z: C * np.sin(y) + B * np.cos(x) - q3_neg
+
+# Gradient of cos(x) function
+X_dot_grad_cosx = lambda x, y, z: -(A * np.sin(z) + C * np.cos(y)) * np.sin(x)
+
+def plot_implicit_surface(func, bounds, resolution=50, level=0, ax=None, **kwargs):
+    """
+    Plot implicit surface using marching cubes algorithm.
+    Replaces MATLAB's fimplicit3.
+    
+    Parameters:
+    -----------
+    func : callable
+        Function f(x,y,z) where surface is at f(x,y,z) = level
+    bounds : list
+        [xmin, xmax, ymin, ymax, zmin, zmax]
+    resolution : int
+        Grid resolution for each dimension
+    level : float
+        Isosurface level (default 0)
+    ax : matplotlib axis
+        3D axis to plot on
+    **kwargs : dict
+        Additional arguments for plot_trisurf
+    """
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+    
+    # Create 3D grid
+    x = np.linspace(bounds[0], bounds[1], resolution)
+    y = np.linspace(bounds[2], bounds[3], resolution)
+    z = np.linspace(bounds[4], bounds[5], resolution)
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+    
+    # Evaluate function on grid
+    F = func(X, Y, Z)
+    
+    # Use marching cubes to find surface
+    try:
+        verts, faces, normals, values = measure.marching_cubes(F, level=level, spacing=(
+            (bounds[1]-bounds[0])/resolution,
+            (bounds[3]-bounds[2])/resolution,
+            (bounds[5]-bounds[4])/resolution
+        ))
+        
+        # Shift vertices to correct position
+        verts[:, 0] += bounds[0]
+        verts[:, 1] += bounds[2]
+        verts[:, 2] += bounds[4]
+        
+        # Plot surface
+        mesh = ax.plot_trisurf(verts[:, 0], verts[:, 1], faces, verts[:, 2],
+                               **kwargs)
+        
+        return mesh
+    except (ValueError, RuntimeError) as e:
+        print(f"Warning: Could not generate surface - {e}")
+        return None
+
+# Energy level
+E = 0.4900980487
+
+# Q values
+q1_pos = A + C
+q2_pos = B + A
+q3_pos = B + C
+q1_neg = A - C
+q2_neg = B - A
+q3_neg = B - C
+
+# Generate line initial conditions
+q = np.linspace(0, 2*np.pi, 20)
+y_q = np.ones_like(q) * np.pi
+z_q = np.ones_like(q) * 3*np.pi/2
+
+line_X1_ICs = np.vstack([q, y_q, z_q])
+line_X2_ICs = np.vstack([z_q, q, y_q])
+
+# Figure 1: Random trajectories
+fig1 = plt.figure(figsize=(10, 8))
+ax1 = fig1.add_subplot(111, projection='3d')
+
+for i in range(rand_ics.shape[1]):
+    sol = solve_ivp(lambda t, x: ABC_ODE(t, x, A, B, C), 
+                    T_interval, rand_ics[:, i], 
+                    method='DOP853', dense_output=True, max_step=0.1)
+    
+    # Apply modulo to keep in [0, 2π]
+    xx = np.mod(sol.y, angle)
+    
+    ax1.plot(xx[0], xx[1], xx[2], '.', markersize=1)
+
+ax1.set_xlabel('x')
+ax1.set_ylabel('y')
+ax1.set_zlabel('z')
+ax1.set_title('Random Initial Conditions')
+plt.tight_layout()
+
+# Figure 2: Zero level sets (implicit surfaces)
+fig2 = plt.figure(figsize=(12, 10))
+ax2 = fig2.add_subplot(111, projection='3d')
+
+# Plot X1, X2, X3 zero level sets using marching cubes
+print("Plotting X1 zero surface...")
+plot_implicit_surface(X1_zero, box_tor, resolution=60, level=0, ax=ax2, 
+                      color='blue', alpha=0.3, label='X1=0')
+
+print("Plotting X2 zero surface...")
+plot_implicit_surface(X2_zero, box_tor, resolution=60, level=0, ax=ax2, 
+                      color='red', alpha=0.3, label='X2=0')
+
+print("Plotting X3 zero surface...")
+plot_implicit_surface(X3_zero, box_tor, resolution=60, level=0, ax=ax2, 
+                      color='green', alpha=0.3, label='X3=0')
+
+ax2.set_xlabel('x')
+ax2.set_ylabel('y')
+ax2.set_zlabel('z')
+ax2.set_title('Zero Level Sets (X1=0, X2=0, X3=0)')
+ax2.set_xlim(box_tor[0], box_tor[1])
+ax2.set_ylim(box_tor[2], box_tor[3])
+ax2.set_zlim(box_tor[4], box_tor[5])
+plt.tight_layout()
+
+# Figure 3: Negative Q level sets
+fig_q = plt.figure(figsize=(12, 10))
+ax_q = fig_q.add_subplot(111, projection='3d')
+
+print("Plotting X1_q_neg surface...")
+plot_implicit_surface(X1_q_neg, box_tor, resolution=60, level=0, ax=ax_q, 
+                      color='cyan', alpha=0.3, label='X1=q1_neg')
+
+print("Plotting X2_q_neg surface...")
+plot_implicit_surface(X2_q_neg, box_tor, resolution=60, level=0, ax=ax_q, 
+                      color='magenta', alpha=0.3, label='X2=q2_neg')
+
+print("Plotting X3_q_neg surface...")
+plot_implicit_surface(X3_q_neg, box_tor, resolution=60, level=0, ax=ax_q, 
+                      color='yellow', alpha=0.3, label='X3=q3_neg')
+
+ax_q.set_xlabel('x')
+ax_q.set_ylabel('y')
+ax_q.set_zlabel('z')
+ax_q.set_title('Negative Q Level Sets')
+ax_q.set_xlim(box_tor[0], box_tor[1])
+ax_q.set_ylim(box_tor[2], box_tor[3])
+ax_q.set_zlim(box_tor[4], box_tor[5])
+plt.tight_layout()
+
+# Figure: Gradient dot cos(x) surface
+fig_grad = plt.figure(figsize=(12, 10))
+ax_grad = fig_grad.add_subplot(111, projection='3d')
+
+print("Plotting X_dot_grad_cosx surface...")
+plot_implicit_surface(X_dot_grad_cosx, box_tor, resolution=60, level=0, ax=ax_grad, 
+                      color='orange', alpha=0.4)
+
+ax_grad.set_xlabel('x')
+ax_grad.set_ylabel('y')
+ax_grad.set_zlabel('z')
+ax_grad.set_title('X · ∇cos(x) = 0')
+ax_grad.set_xlim(box_tor[0], box_tor[1])
+ax_grad.set_ylim(box_tor[2], box_tor[3])
+ax_grad.set_zlim(box_tor[4], box_tor[5])
+plt.tight_layout()
+
+# Figure 3: Line X1 ICs
+fig3 = plt.figure(figsize=(10, 8))
+ax3 = fig3.add_subplot(111, projection='3d')
+
+for i in range(line_X1_ICs.shape[1]):
+    sol = solve_ivp(lambda t, x: ABC_ODE(t, x, A, B, C), 
+                    T_interval, line_X1_ICs[:, i], 
+                    method='DOP853', max_step=0.1)
+    
+    xx = np.mod(sol.y, angle)
+    ax3.plot(xx[0], xx[1], xx[2], '.', markersize=1)
+
+ax3.set_xlabel('x')
+ax3.set_ylabel('y')
+ax3.set_zlabel('z')
+ax3.set_title('Line X1 Initial Conditions')
+plt.tight_layout()
+
+# Figure 4: Line X2 ICs
+fig4 = plt.figure(figsize=(10, 8))
+ax4 = fig4.add_subplot(111, projection='3d')
+
+for i in range(line_X2_ICs.shape[1]):
+    sol = solve_ivp(lambda t, x: ABC_ODE(t, x, A, B, C), 
+                    T_interval, line_X2_ICs[:, i], 
+                    method='DOP853', max_step=0.1)
+    
+    xx = np.mod(sol.y, angle)
+    ax4.plot(xx[0], xx[1], xx[2], '.', markersize=1)
+
+ax4.set_xlabel('x')
+ax4.set_ylabel('y')
+ax4.set_zlabel('z')
+ax4.set_title('Line X2 Initial Conditions')
+plt.tight_layout()
+
+# Figure 5: Multi-view subplots (equivalent to the 4-panel figure)
+fig5 = plt.figure(figsize=(14, 10))
+
+# Compute trajectories for multi-view
+trajectories = []
+for i in range(min(5, line_X1_ICs.shape[1])):
+    sol = solve_ivp(lambda t, x: ABC_ODE(t, x, A, B, C), 
+                    T_interval, line_X1_ICs[:, i], 
+                    method='DOP853', max_step=0.1)
+    xx = np.mod(sol.y, angle)
+    trajectories.append(xx)
+
+# Four different views
+views = [(45, 45), (0, 90), (90, 0), (0, 0)]
+titles = ['view(45,45)', 'view(0,90)', 'view(90,0)', 'view(0,0)']
+
+for idx, (elev, azim) in enumerate(views):
+    ax = fig5.add_subplot(2, 2, idx+1, projection='3d')
+    
+    for traj in trajectories:
+        ax.plot(traj[0], traj[1], traj[2], '.', markersize=1)
+    
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    ax.set_title(titles[idx])
+
+plt.tight_layout()
+
+# Display all figures
+plt.show()
+
+print("\nConversion complete!")
+print("Implicit surfaces plotted using scikit-image marching cubes algorithm")
+print("This replaces MATLAB's fimplicit3 functionality")
+print("\nNote: Increase 'resolution' parameter in plot_implicit_surface()")
+print("for smoother surfaces (at the cost of computation time)")
